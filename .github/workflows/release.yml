@@ -73,7 +73,7 @@ jobs:
           GORELEASER_CURRENT_TAG: ${{ needs.tag.outputs.tag }}
 
   darwin:
-    needs: tag
+    needs: [tag, release]
     runs-on: macos-latest
     permissions:
       contents: write
