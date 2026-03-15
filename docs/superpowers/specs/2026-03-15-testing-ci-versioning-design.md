@@ -201,8 +201,8 @@ jobs:
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
       - name: Create and push tag
         run: |
-          git tag ${{ steps.calver.outputs.tag }}
-          git push origin ${{ steps.calver.outputs.tag }}
+          git tag "${{ steps.calver.outputs.tag }}" "${{ github.sha }}"
+          git push origin "${{ steps.calver.outputs.tag }}"
 
   release:
     needs: tag
@@ -240,6 +240,10 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GORELEASER_CURRENT_TAG: ${{ needs.tag.outputs.tag }}
           GOOS: ${{ matrix.goos }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: artifacts-${{ matrix.goos }}
+          path: dist/
 
   merge:
     needs: [tag, release]
@@ -250,6 +254,11 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: artifacts-*
+          path: dist/
+          merge-multiple: true
       - uses: goreleaser/goreleaser-action@v6
         with:
           version: "~> v2"
