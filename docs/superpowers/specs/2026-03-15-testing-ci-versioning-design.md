@@ -35,6 +35,7 @@ Tests for data loading and JSON parsing:
 - **`TestLoadColorsFile_MalformedJSON`** — returns error for invalid JSON
 - **`TestLoadColorsFile_DefaultTolerance`** — colors with tolerance=0 get config's default tolerance
 - **`TestLoadColorsFile_CustomTolerance`** — colors with tolerance>0 keep their own tolerance
+- **`TestLoadColorsFile_AppendsToExisting`** — calling twice accumulates colors (not replaces)
 
 Note: `loadColorsFile` uses the global `targetColors` and `config` variables. Tests will need to reset these globals before each test case.
 
@@ -42,9 +43,12 @@ Note: `loadColorsFile` uses the global `targetColors` and `config` variables. Te
 
 Tests for color analysis functions:
 
-- **`TestAnalyzeColors`** — given a synthetic `image.NRGBA`, verify dominant colors are extracted correctly
+- **`TestAnalyzeColors`** — given a synthetic `image.NRGBA` with fully opaque pixels, verify dominant colors are extracted correctly
 - **`TestAnalyzeColors_SkipsBackground`** — black (0,0,0) and white (255,255,255) pixels are filtered out
+- **`TestAnalyzeColors_AllBackgroundEdgeCase`** — when all top buckets are background, function returns empty (not stuck)
 - **`TestAnalyzeColors_MaxTenColors`** — output is capped at 10 entries
+
+**Constraint:** Colorpicker tests must NOT import or call `captureRegion()` — that function depends on platform-specific display tools. All test images must use fully opaque pixels (`alpha=255`) since `analyzeColors` calls `RGBA()` which returns premultiplied values.
 - **`TestDeduplicateColors`** — colors within 16-unit tolerance are merged, counts are summed
 - **`TestDeduplicateColors_NoMerge`** — colors >16 apart remain separate
 - **`TestAbsInt`** — positive, negative, zero
@@ -130,6 +134,8 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libx11-dev libxcursor-dev libxrandr-dev \
             libxtst-dev libxi-dev libxinerama-dev libxkbcommon-dev
+      - name: Verify modules
+        run: go mod verify
       - name: Vet
         run: go vet ./...
       - name: Test
@@ -142,6 +148,13 @@ System dependencies are needed because `go vet ./...` and `go test ./...` compil
 
 ### File: `.github/workflows/release.yml`
 
+The release workflow uses a matrix strategy: Linux+Windows builds run on `ubuntu-latest`, macOS builds run on `macos-latest`. This is required because robotgo's CGo dependencies need native platform toolchains (Cocoa frameworks on macOS, X11 headers on Linux).
+
+The workflow has three jobs:
+1. **test** — runs the full test suite (gate before release)
+2. **release** — creates the CalVer tag and runs GoReleaser with `--split` per OS
+3. **merge** — merges the split artifacts into a single GitHub release
+
 ```yaml
 name: Release
 on:
@@ -149,17 +162,31 @@ on:
     branches: [main]
 
 jobs:
-  release:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libx11-dev libxcursor-dev libxrandr-dev \
+            libxtst-dev libxi-dev libxinerama-dev libxkbcommon-dev
+      - run: go test -v -race ./...
+
+  tag:
+    needs: test
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    outputs:
+      tag: ${{ steps.calver.outputs.tag }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - uses: actions/setup-go@v5
-        with:
-          go-version: "1.24"
       - name: Generate CalVer tag
         id: calver
         run: |
@@ -176,19 +203,60 @@ jobs:
         run: |
           git tag ${{ steps.calver.outputs.tag }}
           git push origin ${{ steps.calver.outputs.tag }}
-      - name: Install cross-compilation dependencies
+
+  release:
+    needs: tag
+    strategy:
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            goos: linux
+          - runner: ubuntu-latest
+            goos: windows
+          - runner: macos-latest
+            goos: darwin
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+      - name: Install Linux/Windows dependencies
+        if: matrix.runner == 'ubuntu-latest'
         run: |
           sudo apt-get update
-          sudo apt-get install -y gcc-mingw-w64-x86-64 \
-            libx11-dev libxcursor-dev libxrandr-dev \
-            libxtst-dev libxi-dev libxinerama-dev libxkbcommon-dev
+          sudo apt-get install -y libx11-dev libxcursor-dev libxrandr-dev \
+            libxtst-dev libxi-dev libxinerama-dev libxkbcommon-dev \
+            gcc-mingw-w64-x86-64
       - uses: goreleaser/goreleaser-action@v6
         with:
-          version: latest
-          args: release --clean
+          version: "~> v2"
+          args: release --clean --split
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GORELEASER_CURRENT_TAG: ${{ steps.calver.outputs.tag }}
+          GORELEASER_CURRENT_TAG: ${{ needs.tag.outputs.tag }}
+          GOOS: ${{ matrix.goos }}
+
+  merge:
+    needs: [tag, release]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: goreleaser/goreleaser-action@v6
+        with:
+          version: "~> v2"
+          args: continue --merge
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GORELEASER_CURRENT_TAG: ${{ needs.tag.outputs.tag }}
 ```
 
 ### CalVer Tag Generation Logic
@@ -197,6 +265,8 @@ jobs:
 2. Find latest existing tag matching `2026.3.*`
 3. If none exists, patch = 0 (first release: `2026.3.0`)
 4. Otherwise, increment patch (e.g., `2026.3.1`, `2026.3.2`)
+
+**Note on race conditions:** If two pushes to main happen in quick succession, both runs could compute the same tag. The second `git push origin $TAG` would fail, which is acceptable — the failed run can be manually re-triggered. This is unlikely in practice for a project of this size.
 
 ## 5. GoReleaser Configuration
 
@@ -287,13 +357,11 @@ changelog:
 
 Linux arm64 and Windows arm64 are excluded — robotgo CGo cross-compilation for these targets is unreliable.
 
-### CGo Cross-Compilation Note
+### CGo Cross-Compilation Strategy
 
-macOS builds from Linux CI will require either:
-- **Option A**: Use `goreleaser-cross` Docker image (bundles osxcross toolchain)
-- **Option B**: Build macOS binaries on `macos-latest` runner in a matrix
+macOS builds require native Cocoa frameworks, so we use a **matrix build strategy**: each OS builds on its native runner. GoReleaser's `--split` flag builds only the targets matching the current `GOOS`, and the `continue --merge` step combines all split artifacts into a single GitHub release.
 
-Given robotgo's heavy CGo dependencies, **Option B (matrix build)** is more reliable. The release workflow may need to be adjusted to use a matrix strategy with per-OS runners if the single-runner approach fails for macOS.
+For Windows cross-compilation from Ubuntu, we use `gcc-mingw-w64-x86-64` with CC/CXX overrides in the GoReleaser config.
 
 ## 6. File Summary
 
@@ -310,6 +378,7 @@ Given robotgo's heavy CGo dependencies, **Option B (matrix build)** is more reli
 
 ## 7. Open Risks
 
-1. **macOS CGo cross-compilation** — Building macOS binaries with CGo on Ubuntu runners may fail. Fallback: matrix strategy with `macos-latest` runner for darwin builds.
-2. **robotgo system deps on CI** — The `go vet` and `go test` commands compile all packages including platform files. CI needs X11 development headers even though tests don't exercise platform code.
-3. **Global state in tests** — `loadColorsFile` mutates global `targetColors` and reads global `config`. Tests must reset these between cases.
+1. **robotgo system deps on CI** — `go vet` and `go test` compile all packages including platform files. CI needs X11 development headers even though tests don't exercise platform code.
+2. **Global state in tests** — `loadColorsFile` mutates global `targetColors` and reads global `config`. Tests must reset these between cases.
+3. **GoReleaser split/merge** — The `--split` + `continue --merge` workflow requires GoReleaser v2. We pin to `~> v2` to avoid breakage.
+4. **CalVer tag race** — Concurrent pushes to main could compute the same tag. Unlikely in practice; failed run can be re-triggered manually.
