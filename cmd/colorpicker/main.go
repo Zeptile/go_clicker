@@ -5,9 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"image"
-	"image/png"
 	"os"
-	"os/exec"
 	"sort"
 	"strconv"
 )
@@ -28,7 +26,6 @@ func main() {
 	captures := 1
 	outFile := "colors.json"
 
-	// Parse args: colorpicker [captures] [outfile]
 	if len(os.Args) > 1 {
 		if n, err := strconv.Atoi(os.Args[1]); err == nil {
 			captures = n
@@ -40,7 +37,6 @@ func main() {
 		outFile = os.Args[2]
 	}
 
-	// Load existing colors if the file already exists
 	var allColors []ColorEntry
 	if data, err := os.ReadFile(outFile); err == nil {
 		var existing ColorsFile
@@ -59,36 +55,11 @@ func main() {
 			fmt.Printf("\nPress Enter when ready for capture %d/%d...", i+1, captures)
 			reader.ReadString('\n')
 		}
-		fmt.Printf("[Capture %d/%d] Click and drag to select a region...\n", i+1, captures)
+		fmt.Printf("[Capture %d/%d] Select a region...\n", i+1, captures)
 
-		slurp := exec.Command("slurp")
-		regionBytes, err := slurp.Output()
+		img, err := captureRegion()
 		if err != nil {
-			fmt.Printf("Error running slurp: %v\n", err)
-			os.Exit(1)
-		}
-		region := string(regionBytes)
-		region = region[:len(region)-1]
-		fmt.Printf("Selected region: %s\n", region)
-
-		tmpFile := fmt.Sprintf("/tmp/colorpicker_capture_%d.png", i)
-		grim := exec.Command("grim", "-g", region, tmpFile)
-		if err := grim.Run(); err != nil {
-			fmt.Printf("Error running grim: %v\n", err)
-			os.Exit(1)
-		}
-
-		f, err := os.Open(tmpFile)
-		if err != nil {
-			fmt.Printf("Error opening capture: %v\n", err)
-			os.Exit(1)
-		}
-
-		img, err := png.Decode(f)
-		f.Close()
-		os.Remove(tmpFile)
-		if err != nil {
-			fmt.Printf("Error decoding capture: %v\n", err)
+			fmt.Printf("Error capturing: %v\n", err)
 			os.Exit(1)
 		}
 
@@ -106,7 +77,6 @@ func main() {
 		allColors = append(allColors, colors...)
 	}
 
-	// Deduplicate similar colors across captures
 	allColors = deduplicateColors(allColors)
 
 	if len(allColors) == 0 {

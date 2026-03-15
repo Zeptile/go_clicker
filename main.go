@@ -3,15 +3,9 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"image/png"
 	"math/rand"
 	"os"
-	"os/exec"
-	"os/signal"
-	"strconv"
-	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/spf13/pflag"
@@ -34,10 +28,7 @@ func main() {
 		}
 	}
 
-	sigToggle := make(chan os.Signal, 1)
-	sigSample := make(chan os.Signal, 1)
-	signal.Notify(sigToggle, syscall.SIGUSR1)
-	signal.Notify(sigSample, syscall.SIGUSR2)
+	toggleCh, sampleCh := setupSignals()
 
 	wg := sync.WaitGroup{}
 	wg.Add(3)
@@ -80,11 +71,11 @@ func main() {
 		}
 	}()
 
-	// Toggle on SIGUSR1
+	// Toggle
 	go func() {
 		defer wg.Done()
 
-		for range sigToggle {
+		for range toggleCh {
 			if !running {
 				fmt.Println("Resumed")
 			} else {
@@ -94,11 +85,11 @@ func main() {
 		}
 	}()
 
-	// Sample color on SIGUSR2
+	// Sample color
 	go func() {
 		defer wg.Done()
 
-		for range sigSample {
+		for range sampleCh {
 			x, y := cursorPos()
 			r, g, b, err := getPixelColor(x, y)
 			if err != nil {
@@ -118,9 +109,7 @@ func main() {
 		}
 	}()
 
-	fmt.Printf("PID: %d\n", os.Getpid())
-	fmt.Println("Toggle:       kill -USR1", os.Getpid())
-	fmt.Println("Sample color: kill -USR2", os.Getpid())
+	printControlInfo()
 
 	if config.colorMode {
 		fmt.Println("Color mode enabled (default tolerance:", config.colorTolerance, ")")
@@ -130,45 +119,6 @@ func main() {
 	}
 
 	wg.Wait()
-}
-
-// cursorPos gets the cursor position via hyprctl
-func cursorPos() (int, int) {
-	out, err := exec.Command("hyprctl", "cursorpos").Output()
-	if err != nil {
-		return 0, 0
-	}
-	parts := strings.Split(strings.TrimSpace(string(out)), ", ")
-	if len(parts) != 2 {
-		return 0, 0
-	}
-	x, _ := strconv.Atoi(parts[0])
-	y, _ := strconv.Atoi(parts[1])
-	return x, y
-}
-
-// getPixelColor captures a 1x1 pixel via grim and returns RGB
-func getPixelColor(x, y int) (int, int, int, error) {
-	region := fmt.Sprintf("%d,%d 1x1", x, y)
-	cmd := exec.Command("grim", "-g", region, "-")
-	out, err := cmd.Output()
-	if err != nil {
-		return 0, 0, 0, fmt.Errorf("grim: %w", err)
-	}
-
-	img, err := png.Decode(strings.NewReader(string(out)))
-	if err != nil {
-		return 0, 0, 0, fmt.Errorf("decode: %w", err)
-	}
-
-	c := img.At(0, 0)
-	r, g, b, _ := c.RGBA()
-	return int(r >> 8), int(g >> 8), int(b >> 8), nil
-}
-
-// click sends a left click via ydotool
-func click() {
-	exec.Command("ydotool", "click", "0xC0").Run()
 }
 
 func loadColorsFile(path string) error {
