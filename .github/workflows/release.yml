@@ -48,16 +48,7 @@ jobs:
 
   release:
     needs: tag
-    strategy:
-      matrix:
-        include:
-          - runner: ubuntu-latest
-            goos: linux
-          - runner: ubuntu-latest
-            goos: windows
-          - runner: macos-latest
-            goos: darwin
-    runs-on: ${{ matrix.runner }}
+    runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
@@ -67,8 +58,7 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: "1.24"
-      - name: Install Linux/Windows dependencies
-        if: matrix.runner == 'ubuntu-latest'
+      - name: Install dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y libx11-dev libxcursor-dev libxrandr-dev \
@@ -77,34 +67,42 @@ jobs:
       - uses: goreleaser/goreleaser-action@v6
         with:
           version: "~> v2"
-          args: release --clean --split
+          args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GORELEASER_CURRENT_TAG: ${{ needs.tag.outputs.tag }}
-          GOOS: ${{ matrix.goos }}
-      - uses: actions/upload-artifact@v4
-        with:
-          name: artifacts-${{ matrix.goos }}
-          path: dist/
 
-  merge:
-    needs: [tag, release]
-    runs-on: ubuntu-latest
+  darwin:
+    needs: tag
+    runs-on: macos-latest
     permissions:
       contents: write
+    strategy:
+      matrix:
+        goarch: [amd64, arm64]
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
         with:
-          fetch-depth: 0
-      - uses: actions/download-artifact@v4
-        with:
-          pattern: artifacts-*
-          path: dist/
-          merge-multiple: true
-      - uses: goreleaser/goreleaser-action@v6
-        with:
-          version: "~> v2"
-          args: continue --merge
+          go-version: "1.24"
+      - name: Build go_clicker
+        run: |
+          CGO_ENABLED=1 GOOS=darwin GOARCH=${{ matrix.goarch }} \
+            go build -ldflags "-s -w -X main.version=${{ needs.tag.outputs.tag }}" \
+            -o go_clicker .
+      - name: Build colorpicker
+        run: |
+          CGO_ENABLED=1 GOOS=darwin GOARCH=${{ matrix.goarch }} \
+            go build -ldflags "-s -w -X main.version=${{ needs.tag.outputs.tag }}" \
+            -o colorpicker ./cmd/colorpicker
+      - name: Create archive
+        run: |
+          tar czf go_clicker_${{ needs.tag.outputs.tag }}_darwin_${{ matrix.goarch }}.tar.gz \
+            go_clicker colorpicker
+      - name: Upload to release
+        run: |
+          gh release upload "${{ needs.tag.outputs.tag }}" \
+            go_clicker_${{ needs.tag.outputs.tag }}_darwin_${{ matrix.goarch }}.tar.gz \
+            --clobber
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GORELEASER_CURRENT_TAG: ${{ needs.tag.outputs.tag }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
