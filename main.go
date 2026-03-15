@@ -1,36 +1,45 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
-	"log"
 	"math/rand"
+	"os"
 	"sync"
 	"time"
 
-	"github.com/go-vgo/robotgo"
 	"github.com/spf13/pflag"
-
-	"golang.design/x/hotkey"
-	"golang.design/x/hotkey/mainthread"
 )
 
 var running = false
 var config Configuration
+var targetColors []TargetColor
+var colorMu sync.RWMutex
 
-func main() { mainthread.Init(app) }
-
-func app() {
+func main() {
 	config = parseConsoleArguments()
 
-	wg := sync.WaitGroup{}
-	wg.Add(2)
+	if config.colorsFile != "" {
+		config.colorMode = true
+		err := loadColorsFile(config.colorsFile)
+		if err != nil {
+			fmt.Printf("Error loading colors file: %v\n", err)
+			os.Exit(1)
+		}
+	}
 
+	toggleCh, sampleCh := setupSignals()
+
+	wg := sync.WaitGroup{}
+	wg.Add(3)
+
+	// Click loop
 	go func() {
 		defer wg.Done()
 
 		for {
-
 			if !running {
+				time.Sleep(10 * time.Millisecond)
 				continue
 			}
 
@@ -45,51 +54,141 @@ func app() {
 
 			time.Sleep(time.Duration(waitForMs) * time.Millisecond)
 
-			robotgo.Click()
+			if config.colorMode {
+				matched, debugInfo := isColorMatch()
+				if !matched {
+					if config.debugMode {
+						fmt.Println("[Debug] Color mismatch, skipping click.", debugInfo)
+					}
+					continue
+				}
+			}
+
+			click()
 			if config.debugMode {
 				fmt.Printf("[Debug] Clicked after waiting %dms\n", waitForMs)
 			}
-	
 		}
-		
 	}()
+
+	// Toggle
 	go func() {
 		defer wg.Done()
 
-		for {
-			err := listenHotkey(hotkey.KeyP, hotkey.ModCtrl, hotkey.ModShift)
-			if err != nil {
-				log.Println(err)
-			}
-	
+		for range toggleCh {
 			if !running {
 				fmt.Println("Resumed")
 			} else {
 				fmt.Println("Paused")
 			}
-	
 			running = !running
 		}
-
 	}()
+
+	// Sample color
+	go func() {
+		defer wg.Done()
+
+		for range sampleCh {
+			x, y := cursorPos()
+			r, g, b, err := getPixelColor(x, y)
+			if err != nil {
+				fmt.Printf("Error sampling color: %v\n", err)
+				continue
+			}
+
+			tol := config.colorTolerance
+			tc := TargetColor{R: r, G: g, B: b, Tolerance: tol, Sampled: true}
+
+			colorMu.Lock()
+			targetColors = append(targetColors, tc)
+			colorMu.Unlock()
+
+			fmt.Printf("Sampled color at (%d, %d): R:%d G:%d B:%d tol:%d [%d colors loaded]\n",
+				x, y, r, g, b, tol, len(targetColors))
+		}
+	}()
+
+	printControlInfo()
+
+	if config.colorMode {
+		fmt.Println("Color mode enabled (default tolerance:", config.colorTolerance, ")")
+		if config.colorsFile != "" {
+			fmt.Printf("Loaded %d colors from %s\n", len(targetColors), config.colorsFile)
+		}
+	}
+
 	wg.Wait()
 }
 
-func listenHotkey(key hotkey.Key, mods ...hotkey.Modifier) (err error) {
-	ms := []hotkey.Modifier{}
-	ms = append(ms, mods...)
-	hk := hotkey.New(ms, key)
-
-	err = hk.Register()
+func loadColorsFile(path string) error {
+	data, err := os.ReadFile(path)
 	if err != nil {
-		return
+		return err
 	}
 
-	<-hk.Keydown()
-	<-hk.Keyup()
-	
-	hk.Unregister()
-	return
+	var cf ColorsFile
+	err = json.Unmarshal(data, &cf)
+	if err != nil {
+		return err
+	}
+
+	colorMu.Lock()
+	defer colorMu.Unlock()
+
+	for _, c := range cf.Colors {
+		tol := c.Tolerance
+		if tol <= 0 {
+			tol = config.colorTolerance
+		}
+		targetColors = append(targetColors, TargetColor{
+			R: c.R, G: c.G, B: c.B,
+			Tolerance: tol,
+			Sampled:   true,
+		})
+	}
+
+	return nil
+}
+
+func isColorMatch() (bool, string) {
+	colorMu.RLock()
+	tc := targetColors
+	colorMu.RUnlock()
+
+	if len(tc) == 0 {
+		return false, "no colors loaded"
+	}
+
+	x, y := cursorPos()
+	r, g, b, err := getPixelColor(x, y)
+	if err != nil {
+		return false, fmt.Sprintf("pixel error: %v", err)
+	}
+
+	closest := ""
+	minDist := 999999
+	for _, t := range tc {
+		dr, dg, db := abs(r-t.R), abs(g-t.G), abs(b-t.B)
+		dist := dr + dg + db
+		if dist < minDist {
+			minDist = dist
+			closest = fmt.Sprintf("pixel=(%d,%d,%d) closest_target=(%d,%d,%d) diff=(%d,%d,%d) tol=%d",
+				r, g, b, t.R, t.G, t.B, dr, dg, db, t.Tolerance)
+		}
+		if dr <= t.Tolerance && dg <= t.Tolerance && db <= t.Tolerance {
+			return true, ""
+		}
+	}
+
+	return false, closest
+}
+
+func abs(x int) int {
+	if x < 0 {
+		return -x
+	}
+	return x
 }
 
 func parseConsoleArguments() Configuration {
@@ -97,9 +196,12 @@ func parseConsoleArguments() Configuration {
 
 	pflag.BoolVar(&config.randomMode, "random", false, "Flag to enable random mode, click interval is random between 0 and randomIntervalEnd")
 	pflag.BoolVar(&config.debugMode, "debug", false, "Flag to enable debug mode, prints debug logs to console")
+	pflag.BoolVar(&config.colorMode, "color", false, "Flag to enable color mode, only clicks when pixel under cursor matches target color")
 
 	pflag.Int64Var(&config.intervalMs, "intervalMs", 50, "Interval in milliseconds to click in normal mode")
 	pflag.Int64Var(&config.randomIntervalEnd, "randomIntervalEnd", 100, "Interval treshold in milliseconds to click in random mode")
+	pflag.IntVar(&config.colorTolerance, "colorTolerance", 30, "RGB tolerance per channel for color matching (0-255)")
+	pflag.StringVar(&config.colorsFile, "colorsFile", "", "Path to colors.json file generated by colorpicker tool")
 
 	pflag.Parse()
 
@@ -116,8 +218,6 @@ func parseConsoleArguments() Configuration {
 			panic("Interval must be greater than 0")
 		}
 	}
-
-	pflag.Parse()
 
 	return config
 }
