@@ -28,14 +28,16 @@ func TestIsBackground(t *testing.T) {
 		r, g, b  int
 		expected bool
 	}{
-		{0, 0, 0, true},
-		{14, 14, 14, true},
-		{15, 15, 15, false},
-		{255, 255, 255, true},
-		{241, 241, 241, true},
-		{240, 240, 240, false},
-		{100, 100, 100, false},
-		{200, 50, 50, false},
+		{0, 0, 0, true},           // near-black
+		{14, 14, 14, true},        // near-black
+		{255, 255, 255, true},     // near-white
+		{241, 241, 241, true},     // near-white
+		{100, 100, 100, true},     // achromatic (gray, maxC-minC < 30)
+		{15, 15, 15, true},        // achromatic
+		{240, 240, 240, true},     // achromatic
+		{200, 50, 50, false},      // chromatic (high saturation)
+		{100, 150, 200, false},    // chromatic
+		{50, 200, 50, false},      // chromatic
 	}
 	for _, tt := range tests {
 		got := isBackground(tt.r, tt.g, tt.b)
