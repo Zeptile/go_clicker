@@ -1,15 +1,4 @@
-package main
-
-type Configuration struct {
-	debugMode         bool
-	randomMode        bool
-	colorMode         bool
-	intervalMs        int64
-	randomIntervalStart int64
-	randomIntervalEnd   int64
-	colorTolerance    int
-	colorsFile        string
-}
+package color
 
 type TargetColor struct {
 	R, G, B   int
@@ -22,6 +11,7 @@ type ColorEntry struct {
 	G         int `json:"g"`
 	B         int `json:"b"`
 	Tolerance int `json:"tolerance"`
+	Count     int `json:"count,omitempty"`
 }
 
 type ColorsFile struct {

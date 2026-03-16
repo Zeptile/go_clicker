@@ -1,6 +1,6 @@
 //go:build windows
 
-package main
+package input
 
 import (
 	"fmt"
@@ -9,7 +9,7 @@ import (
 	"golang.design/x/hotkey/mainthread"
 )
 
-func setupSignals() (<-chan struct{}, <-chan struct{}) {
+func Setup() (<-chan struct{}, <-chan struct{}) {
 	toggleCh := make(chan struct{}, 1)
 	sampleCh := make(chan struct{}, 1)
 
@@ -46,7 +46,7 @@ func setupSignals() (<-chan struct{}, <-chan struct{}) {
 	return toggleCh, sampleCh
 }
 
-func printControlInfo() {
+func PrintControlInfo() {
 	fmt.Println("Toggle:       Ctrl+Shift+P")
 	fmt.Println("Sample color: Ctrl+Shift+O")
 }

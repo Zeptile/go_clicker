@@ -11,17 +11,12 @@ import (
 	"time"
 
 	"github.com/go-vgo/robotgo"
+
+	"zeptile.com/go_clicker/internal/platform"
 )
 
-func isWayland() bool {
-	if os.Getenv("WAYLAND_DISPLAY") != "" {
-		return true
-	}
-	return os.Getenv("XDG_SESSION_TYPE") == "wayland"
-}
-
 func captureRegion() (image.Image, error) {
-	if isWayland() {
+	if platform.IsWayland() {
 		return captureWayland()
 	}
 	return captureX11()

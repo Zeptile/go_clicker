@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"math/rand"
 	"os"
@@ -9,12 +8,27 @@ import (
 	"time"
 
 	"github.com/spf13/pflag"
+
+	"zeptile.com/go_clicker/internal/color"
+	"zeptile.com/go_clicker/internal/input"
+	"zeptile.com/go_clicker/internal/platform"
 )
+
+type Configuration struct {
+	debugMode           bool
+	randomMode          bool
+	colorMode           bool
+	intervalMs          int64
+	randomIntervalStart int64
+	randomIntervalEnd   int64
+	colorTolerance      int
+	colorsFile          string
+}
 
 var running = false
 var version = "dev"
 var config Configuration
-var targetColors []TargetColor
+var targetColors []color.TargetColor
 var colorMu sync.RWMutex
 
 func main() {
@@ -22,14 +36,17 @@ func main() {
 
 	if config.colorsFile != "" {
 		config.colorMode = true
-		err := loadColorsFile(config.colorsFile)
+		loaded, err := color.LoadFile(config.colorsFile, config.colorTolerance)
 		if err != nil {
 			fmt.Printf("Error loading colors file: %v\n", err)
 			os.Exit(1)
 		}
+		colorMu.Lock()
+		targetColors = append(targetColors, loaded...)
+		colorMu.Unlock()
 	}
 
-	toggleCh, sampleCh := setupSignals()
+	toggleCh, sampleCh := input.Setup()
 
 	wg := sync.WaitGroup{}
 	wg.Add(3)
@@ -65,7 +82,7 @@ func main() {
 				}
 			}
 
-			click()
+			platform.Click()
 			if config.debugMode {
 				fmt.Printf("[Debug] Clicked after waiting %dms\n", waitForMs)
 			}
@@ -91,15 +108,15 @@ func main() {
 		defer wg.Done()
 
 		for range sampleCh {
-			x, y := cursorPos()
-			r, g, b, err := getPixelColor(x, y)
+			x, y := platform.CursorPos()
+			r, g, b, err := platform.GetPixelColor(x, y)
 			if err != nil {
 				fmt.Printf("Error sampling color: %v\n", err)
 				continue
 			}
 
 			tol := config.colorTolerance
-			tc := TargetColor{R: r, G: g, B: b, Tolerance: tol, Sampled: true}
+			tc := color.TargetColor{R: r, G: g, B: b, Tolerance: tol, Sampled: true}
 
 			colorMu.Lock()
 			targetColors = append(targetColors, tc)
@@ -110,7 +127,7 @@ func main() {
 		}
 	}()
 
-	printControlInfo()
+	input.PrintControlInfo()
 
 	if config.colorMode {
 		fmt.Println("Color mode enabled (default tolerance:", config.colorTolerance, ")")
@@ -128,54 +145,6 @@ func main() {
 	wg.Wait()
 }
 
-func loadColorsFile(path string) error {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return err
-	}
-
-	var cf ColorsFile
-	err = json.Unmarshal(data, &cf)
-	if err != nil {
-		return err
-	}
-
-	colorMu.Lock()
-	defer colorMu.Unlock()
-
-	for _, c := range cf.Colors {
-		tol := c.Tolerance
-		if tol <= 0 {
-			tol = config.colorTolerance
-		}
-		targetColors = append(targetColors, TargetColor{
-			R: c.R, G: c.G, B: c.B,
-			Tolerance: tol,
-			Sampled:   true,
-		})
-	}
-
-	return nil
-}
-
-func matchesAnyColor(r, g, b int, tc []TargetColor) (bool, string) {
-	closest := ""
-	minDist := 999999
-	for _, t := range tc {
-		dr, dg, db := abs(r-t.R), abs(g-t.G), abs(b-t.B)
-		dist := dr + dg + db
-		if dist < minDist {
-			minDist = dist
-			closest = fmt.Sprintf("pixel=(%d,%d,%d) closest_target=(%d,%d,%d) diff=(%d,%d,%d) tol=%d",
-				r, g, b, t.R, t.G, t.B, dr, dg, db, t.Tolerance)
-		}
-		if dr <= t.Tolerance && dg <= t.Tolerance && db <= t.Tolerance {
-			return true, ""
-		}
-	}
-	return false, closest
-}
-
 func isColorMatch() (bool, string) {
 	colorMu.RLock()
 	tc := targetColors
@@ -185,20 +154,13 @@ func isColorMatch() (bool, string) {
 		return false, "no colors loaded"
 	}
 
-	x, y := cursorPos()
-	r, g, b, err := getPixelColor(x, y)
+	x, y := platform.CursorPos()
+	r, g, b, err := platform.GetPixelColor(x, y)
 	if err != nil {
 		return false, fmt.Sprintf("pixel error: %v", err)
 	}
 
-	return matchesAnyColor(r, g, b, tc)
-}
-
-func abs(x int) int {
-	if x < 0 {
-		return -x
-	}
-	return x
+	return color.MatchesAnyColor(r, g, b, tc)
 }
 
 func parseConsoleArguments() Configuration {

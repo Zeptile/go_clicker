@@ -2,8 +2,8 @@ version: 2
 
 builds:
   - id: go_clicker
-    main: .
-    binary: go_clicker
+    dir: cmd/clicker
+    binary: clicker
     ldflags:
       - -s -w -X main.version={{.Version}}
     env:
