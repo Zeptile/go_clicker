@@ -157,6 +157,24 @@ func loadColorsFile(path string) error {
 	return nil
 }
 
+func matchesAnyColor(r, g, b int, tc []TargetColor) (bool, string) {
+	closest := ""
+	minDist := 999999
+	for _, t := range tc {
+		dr, dg, db := abs(r-t.R), abs(g-t.G), abs(b-t.B)
+		dist := dr + dg + db
+		if dist < minDist {
+			minDist = dist
+			closest = fmt.Sprintf("pixel=(%d,%d,%d) closest_target=(%d,%d,%d) diff=(%d,%d,%d) tol=%d",
+				r, g, b, t.R, t.G, t.B, dr, dg, db, t.Tolerance)
+		}
+		if dr <= t.Tolerance && dg <= t.Tolerance && db <= t.Tolerance {
+			return true, ""
+		}
+	}
+	return false, closest
+}
+
 func isColorMatch() (bool, string) {
 	colorMu.RLock()
 	tc := targetColors
@@ -172,22 +190,7 @@ func isColorMatch() (bool, string) {
 		return false, fmt.Sprintf("pixel error: %v", err)
 	}
 
-	closest := ""
-	minDist := 999999
-	for _, t := range tc {
-		dr, dg, db := abs(r-t.R), abs(g-t.G), abs(b-t.B)
-		dist := dr + dg + db
-		if dist < minDist {
-			minDist = dist
-			closest = fmt.Sprintf("pixel=(%d,%d,%d) closest_target=(%d,%d,%d) diff=(%d,%d,%d) tol=%d",
-				r, g, b, t.R, t.G, t.B, dr, dg, db, t.Tolerance)
-		}
-		if dr <= t.Tolerance && dg <= t.Tolerance && db <= t.Tolerance {
-			return true, ""
-		}
-	}
-
-	return false, closest
+	return matchesAnyColor(r, g, b, tc)
 }
 
 func abs(x int) int {
