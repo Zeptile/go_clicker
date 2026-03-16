@@ -1,6 +1,6 @@
 //go:build darwin || windows
 
-package main
+package platform
 
 import (
 	"strconv"
@@ -8,15 +8,15 @@ import (
 	"github.com/go-vgo/robotgo"
 )
 
-func click() {
+func Click() {
 	robotgo.Click()
 }
 
-func cursorPos() (int, int) {
+func CursorPos() (int, int) {
 	return robotgo.Location()
 }
 
-func getPixelColor(x, y int) (int, int, int, error) {
+func GetPixelColor(x, y int) (int, int, int, error) {
 	hex := robotgo.GetPixelColor(x, y)
 	r, _ := strconv.ParseInt(hex[0:2], 16, 32)
 	g, _ := strconv.ParseInt(hex[2:4], 16, 32)

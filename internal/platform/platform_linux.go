@@ -1,6 +1,6 @@
 //go:build linux
 
-package main
+package platform
 
 import (
 	"fmt"
@@ -13,23 +13,23 @@ import (
 	"github.com/go-vgo/robotgo"
 )
 
-func isWayland() bool {
+func IsWayland() bool {
 	if os.Getenv("WAYLAND_DISPLAY") != "" {
 		return true
 	}
 	return os.Getenv("XDG_SESSION_TYPE") == "wayland"
 }
 
-func click() {
-	if isWayland() {
+func Click() {
+	if IsWayland() {
 		exec.Command("ydotool", "click", "0xC0").Run()
 	} else {
 		robotgo.Click()
 	}
 }
 
-func cursorPos() (int, int) {
-	if isWayland() {
+func CursorPos() (int, int) {
+	if IsWayland() {
 		out, err := exec.Command("hyprctl", "cursorpos").Output()
 		if err != nil {
 			return 0, 0
@@ -45,8 +45,8 @@ func cursorPos() (int, int) {
 	return robotgo.Location()
 }
 
-func getPixelColor(x, y int) (int, int, int, error) {
-	if isWayland() {
+func GetPixelColor(x, y int) (int, int, int, error) {
+	if IsWayland() {
 		region := fmt.Sprintf("%d,%d 1x1", x, y)
 		cmd := exec.Command("grim", "-g", region, "-")
 		out, err := cmd.Output()

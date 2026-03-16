@@ -1,6 +1,6 @@
 //go:build unix
 
-package main
+package input
 
 import (
 	"fmt"
@@ -9,7 +9,7 @@ import (
 	"syscall"
 )
 
-func setupSignals() (<-chan struct{}, <-chan struct{}) {
+func Setup() (<-chan struct{}, <-chan struct{}) {
 	sigToggle := make(chan os.Signal, 1)
 	sigSample := make(chan os.Signal, 1)
 	signal.Notify(sigToggle, syscall.SIGUSR1)
@@ -32,7 +32,7 @@ func setupSignals() (<-chan struct{}, <-chan struct{}) {
 	return toggleCh, sampleCh
 }
 
-func printControlInfo() {
+func PrintControlInfo() {
 	pid := os.Getpid()
 	fmt.Printf("PID: %d\n", pid)
 	fmt.Println("Toggle:       kill -USR1", pid)
