@@ -33,8 +33,6 @@ func Setup() (<-chan struct{}, <-chan struct{}) {
 }
 
 func PrintControlInfo() {
-	pid := os.Getpid()
-	fmt.Printf("PID: %d\n", pid)
-	fmt.Println("Toggle:       kill -USR1", pid)
-	fmt.Println("Sample color: kill -USR2", pid)
+	fmt.Println("Toggle:       Ctrl+Shift+P")
+	fmt.Println("Sample color: Ctrl+Shift+O")
 }
