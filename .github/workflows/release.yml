@@ -1,0 +1,108 @@
+name: Release
+on:
+  push:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libx11-dev libxcursor-dev libxrandr-dev \
+            libxtst-dev libxi-dev libxinerama-dev libxkbcommon-dev
+      - run: go test -v -race ./...
+
+  tag:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      tag: ${{ steps.calver.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Generate CalVer tag
+        id: calver
+        run: |
+          YEAR_MONTH=$(date +%Y.%-m)
+          LATEST=$(git tag -l "${YEAR_MONTH}.*" --sort=-v:refname | head -n1)
+          if [ -z "$LATEST" ]; then
+            PATCH=0
+          else
+            PATCH=$(echo "$LATEST" | awk -F. '{print $3+1}')
+          fi
+          TAG="${YEAR_MONTH}.${PATCH}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+      - name: Create and push tag
+        run: |
+          git tag "${{ steps.calver.outputs.tag }}" "${{ github.sha }}"
+          git push origin "${{ steps.calver.outputs.tag }}"
+
+  release:
+    needs: tag
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libx11-dev libxcursor-dev libxrandr-dev \
+            libxtst-dev libxi-dev libxinerama-dev libxkbcommon-dev \
+            gcc-mingw-w64-x86-64
+      - uses: goreleaser/goreleaser-action@v6
+        with:
+          version: "~> v2"
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GORELEASER_CURRENT_TAG: ${{ needs.tag.outputs.tag }}
+
+  darwin:
+    needs: [tag, release]
+    runs-on: macos-latest
+    permissions:
+      contents: write
+    strategy:
+      matrix:
+        goarch: [amd64, arm64]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+      - name: Build go_clicker
+        run: |
+          CGO_ENABLED=1 GOOS=darwin GOARCH=${{ matrix.goarch }} \
+            go build -ldflags "-s -w -X main.version=${{ needs.tag.outputs.tag }}" \
+            -o go_clicker .
+      - name: Build colorpicker
+        run: |
+          CGO_ENABLED=1 GOOS=darwin GOARCH=${{ matrix.goarch }} \
+            go build -ldflags "-s -w -X main.version=${{ needs.tag.outputs.tag }}" \
+            -o colorpicker ./cmd/colorpicker
+      - name: Create archive
+        run: |
+          tar czf go_clicker_${{ needs.tag.outputs.tag }}_darwin_${{ matrix.goarch }}.tar.gz \
+            go_clicker colorpicker
+      - name: Upload to release
+        run: |
+          gh release upload "${{ needs.tag.outputs.tag }}" \
+            go_clicker_${{ needs.tag.outputs.tag }}_darwin_${{ matrix.goarch }}.tar.gz \
+            --clobber
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -22,7 +22,16 @@ type ColorsFile struct {
 	Colors []ColorEntry `json:"colors"`
 }
 
+var version = "dev"
+
 func main() {
+	for _, arg := range os.Args[1:] {
+		if arg == "--version" || arg == "-version" {
+			fmt.Println(version)
+			os.Exit(0)
+		}
+	}
+
 	captures := 1
 	outFile := "colors.json"
 
