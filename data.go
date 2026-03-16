@@ -5,7 +5,8 @@ type Configuration struct {
 	randomMode        bool
 	colorMode         bool
 	intervalMs        int64
-	randomIntervalEnd int64
+	randomIntervalStart int64
+	randomIntervalEnd   int64
 	colorTolerance    int
 	colorsFile        string
 }

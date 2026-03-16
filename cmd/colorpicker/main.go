@@ -38,11 +38,13 @@ func main() {
 	}
 
 	var allColors []ColorEntry
-	if data, err := os.ReadFile(outFile); err == nil {
-		var existing ColorsFile
-		if json.Unmarshal(data, &existing) == nil {
-			allColors = existing.Colors
-			fmt.Printf("Loaded %d existing colors from %s\n", len(allColors), outFile)
+	if captures > 1 {
+		if data, err := os.ReadFile(outFile); err == nil {
+			var existing ColorsFile
+			if json.Unmarshal(data, &existing) == nil {
+				allColors = existing.Colors
+				fmt.Printf("Loaded %d existing colors from %s\n", len(allColors), outFile)
+			}
 		}
 	}
 
@@ -70,14 +72,23 @@ func main() {
 		fmt.Printf("Found %d dominant colors from %d pixels:\n", len(colors), totalPixels)
 		for j, c := range colors {
 			pct := float64(c.Count) / float64(totalPixels) * 100
-			fmt.Printf("  %d. #%02x%02x%02x (R:%d G:%d B:%d) - %.1f%% of pixels\n",
-				j+1, c.R, c.G, c.B, c.R, c.G, c.B, pct)
+			fmt.Printf("  %d. \033[48;2;%d;%d;%dm    \033[0m #%02x%02x%02x (R:%d G:%d B:%d) - %.1f%% of pixels\n",
+				j+1, c.R, c.G, c.B, c.R, c.G, c.B, c.R, c.G, c.B, pct)
 		}
 
 		allColors = append(allColors, colors...)
 	}
 
 	allColors = deduplicateColors(allColors)
+
+	// Filter out background/achromatic colors (including any from previous runs)
+	var filtered []ColorEntry
+	for _, c := range allColors {
+		if !isBackground(c.R, c.G, c.B) {
+			filtered = append(filtered, c)
+		}
+	}
+	allColors = filtered
 
 	if len(allColors) == 0 {
 		fmt.Println("No meaningful colors found")
@@ -86,8 +97,8 @@ func main() {
 
 	fmt.Printf("\nTotal: %d unique colors\n", len(allColors))
 	for i, c := range allColors {
-		fmt.Printf("  %d. #%02x%02x%02x (R:%d G:%d B:%d) count:%d\n",
-			i+1, c.R, c.G, c.B, c.R, c.G, c.B, c.Count)
+		fmt.Printf("  %d. \033[48;2;%d;%d;%dm    \033[0m #%02x%02x%02x (R:%d G:%d B:%d) count:%d\n",
+			i+1, c.R, c.G, c.B, c.R, c.G, c.B, c.R, c.G, c.B, c.Count)
 	}
 
 	cf := ColorsFile{Colors: allColors}
@@ -173,8 +184,11 @@ func analyzeColors(img image.Image) []ColorEntry {
 	used := make(map[int]bool)
 
 	for i, bc := range sorted {
-		if used[i] || len(colors) >= 10 {
+		if len(colors) >= 10 {
 			break
+		}
+		if used[i] {
+			continue
 		}
 
 		avgR := int(totalR[bc.bk] / int64(bc.count))
@@ -227,6 +241,25 @@ func isBackground(r, g, b int) bool {
 		return true
 	}
 	if r > 240 && g > 240 && b > 240 {
+		return true
+	}
+	// Filter achromatic (gray/neutral) colors — these are common UI
+	// backgrounds that shouldn't be picked as target colors.
+	maxC := r
+	if g > maxC {
+		maxC = g
+	}
+	if b > maxC {
+		maxC = b
+	}
+	minC := r
+	if g < minC {
+		minC = g
+	}
+	if b < minC {
+		minC = b
+	}
+	if maxC-minC < 30 {
 		return true
 	}
 	return false
